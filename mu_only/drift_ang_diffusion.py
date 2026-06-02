@@ -117,7 +117,6 @@ def order2_weak(N_S=1001, N_MU=100, N_HISTORIES=1000):
   
   for h in range(N_HISTORIES):
     mn = MU_0
-    hist_tally(0, mn, _psi)
     for n in range(N_S):
       xi = np.random.normal()
       eta = np.random.normal()
