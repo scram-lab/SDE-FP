@@ -53,6 +53,8 @@ def hist_tally(m, x_prev, weight, psi_arr, ds, dx):
       dist_to_face = x - x_face
 
     if x_face <= X_MIN or x_face >= X_MAX:
+      ds_to_boundary = dist_to_face / abs(m)
+      psi_arr[ix, mu_index] += weight * min(ds_to_boundary, s_remaining)
       break
 
     ds_to_face = dist_to_face / abs(m)
@@ -88,10 +90,12 @@ def euler_marayuma_psi(DS=0.2, N_X=200, N_MU=100, N_HISTORIES=1000):
       xi = np.random.normal()
       mn = mn - SIGMA_TR*mn*DS + math.sqrt(SIGMA_TR * (1 - mn**2)*DS) * xi
       mn = clip(mn, -1, 1)
-      if xn + mn*DS < X_MIN or xn + mn*DS > X_MAX:
+      psin *= ATTENUATION
+      xnew = hist_tally(mn, xn, psin, _psi, DS, DX)
+      if xnew < X_MIN or xnew > X_MAX:
         break
-      #psin *= ATTENUATION
-      xn = hist_tally(mn, xn, psin, _psi, DS, DX)
+      xn = xnew
+
 
   _psi /= N_HISTORIES * DMU * DX
   return _psi, DX, DMU
@@ -132,7 +136,7 @@ for ds in ds_array:
     )
   
   phi = np.sum(euler_marayuma, axis=1) * DMU
-  phi_ax.plot(x_vals, phi / (phi[0]), label=fr"$\Delta_s={ds}$")
+  phi_ax.plot(x_vals, phi, label=fr"$\Delta_s={ds}$")
   print(Fore.GREEN + f"Finished ds={ds}$")
 
 for fig, ax, xval in zip(figs, axes, x_vals_plot):
@@ -141,11 +145,11 @@ for fig, ax, xval in zip(figs, axes, x_vals_plot):
   fig.savefig(rf"psi-x-{str(xval).replace(".", "_")}")
 
 phi_ax.set_xlabel(r"x-position")
-phi_ax.set_title(r"$\phi(x)$ (no attenuation)")
+phi_ax.set_title(r"$\phi(x) (with attenuation)$")
 phi_ax.legend()
-phi_ax.set_yscale("log")
-phi_ax.set_ylim(1e-4, 1.0)
-phi_fig.savefig("phi_no_attenuation")
+#phi_ax.set_yscale("log")
+#phi_ax.set_ylim(1e-4, 1.0)
+phi_fig.savefig("phi_w_attenuation")
 
 plt.show()
 
