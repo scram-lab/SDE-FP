@@ -8,7 +8,7 @@ from numpy.polynomial.legendre import Legendre, legval
 
 SIGMA_TR = 0.5
 SIGMA_T = 1.0
-MU_0 = 0.0
+MU_0 = 1.0
 X0 = 0.0
 X_MIN = 0.0
 X_MAX = 2.0
@@ -90,7 +90,7 @@ def euler_marayuma_psi(DS=0.2, N_X=200, N_MU=100, N_HISTORIES=1000):
       xi = np.random.normal()
       mn = mn - SIGMA_TR*mn*DS + math.sqrt(SIGMA_TR * (1 - mn**2)*DS) * xi
       mn = clip(mn, -1, 1)
-      psin *= ATTENUATION
+      #psin *= ATTENUATION
       xnew = hist_tally(mn, xn, psin, _psi, DS, DX)
       if xnew < X_MIN or xnew > X_MAX:
         break
@@ -145,11 +145,11 @@ for fig, ax, xval in zip(figs, axes, x_vals_plot):
   fig.savefig(rf"psi-x-{str(xval).replace(".", "_")}")
 
 phi_ax.set_xlabel(r"x-position")
-phi_ax.set_title(r"$\phi(x) (with attenuation)$")
+phi_ax.set_title(r"$\phi(x) (no attenuation)$")
 phi_ax.legend()
 #phi_ax.set_yscale("log")
 #phi_ax.set_ylim(1e-4, 1.0)
-phi_fig.savefig("phi_w_attenuation")
+phi_fig.savefig("phi_no_attenuation")
 
 plt.show()
 
