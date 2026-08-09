@@ -98,9 +98,9 @@ def euler_marayuma_psi(DS=0.2, N_X=300, N_MU=100, N_HISTORIES=1000):
     while True:
       xi = np.random.normal()
       TRANSPORT_XS = SIGMA_TR[np.searchsorted(BOUNDS, xn) - 1]
+      xnew = hist_tally(mn, xn, psin, _psi, DS, DX)
       mn = mn - TRANSPORT_XS*mn*DS + math.sqrt(TRANSPORT_XS * (1 - mn**2)*DS) * xi
       mn = clip(mn, -1, 1)
-      xnew = hist_tally(mn, xn, psin, _psi, DS, DX)
       if xnew < X_MIN or xnew > X_MAX:
         break
       xn = xnew
@@ -135,9 +135,9 @@ for ds in ds_array:
 phi_ax.plot(REF_X, REF_PHI, label="Reference")
 
 phi_ax.set_xlabel(r"x-position")
-phi_ax.set_ylabel(r"$\phi$  $\left[\cm^{2}\cdot s^{-1}\right]$")
+#phi_ax.set_ylabel(r"$\phi$  $\left[\cm^{2}\cdot s^{-1}\right]$")
 err_ax.set_xlabel(r"x-position")
-err_ax.set_ylabel(r"Error [%]")
+#err_ax.set_ylabel(r"Error [%]")
 phi_ax.legend()
 err_ax.legend()
 
