@@ -1,5 +1,6 @@
 __pycache__
 **/*.pdf
+**/*.h5
 
 **/.DS_Store
 **/build
