@@ -5,6 +5,8 @@
 #include <mdspan>
 #include <algorithm>
 #include <random>
+#include <filesystem>
+#include <print>
 
 #include <hdf5.h>
 #include <hdf5_hl.h>
@@ -15,6 +17,7 @@ const double FP_TOLERANCE=1e-14;
 // ========================================================================= //
 std::mt19937_64 RNG{std::random_device{}()};
 std::normal_distribution<double> NORMAL_DISTRIBUTION(0.0, 1.0);
+std::uniform_real_distribution<double> UNIFORM_DISTRIBUTION(0.0, 1.0);
 
 // ========================================================================= //
 // Particle declaration
@@ -27,11 +30,24 @@ struct Particle {
   double x;
   double mu;  
   bool alive;
+
+  double distance_to_next_collision;
   
   Cell* cell;
 
+  Particle(const double x, const double mu, Cell* cell)
+    : x(x),
+      mu(mu),
+      alive(true),
+      distance_to_next_collision(PathLengthToNextCollision()),
+      cell(cell) {}
+
+  void DoHardCollision();
+
   template <size_t XBins, size_t MuBins> 
   void Update(double ds, HistogramTally<XBins, MuBins>& tally);
+
+  double PathLengthToNextCollision() {return -std::log(UNIFORM_DISTRIBUTION(RNG));} 
 };
 
 // ========================================================================= //
@@ -133,7 +149,11 @@ template <size_t XBins, size_t MuBins>
 class HistogramTally {
   public:
     HistogramTally(const Mesh& x, const Mesh& mu): x_mesh(x), mu_mesh(mu){
-      file_id = H5Fcreate("sde_output.h5", H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT);
+      namespace fs = std::filesystem;
+      fs::path fpath = "sde_output.h5";
+      if (fs::exists(fpath)) fs::remove(fpath); 
+      
+      file_id = H5Fcreate(fpath.c_str(), H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT);
     }
 
     ~HistogramTally() {
@@ -217,6 +237,10 @@ class HistogramTally {
 // ========================================================================= //
 // Particle instantation
 // ========================================================================= //
+void Particle::DoHardCollision() {
+  distance_to_next_collision = PathLengthToNextCollision();
+}
+
 template <size_t XBins, size_t MuBins>
 void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
   do {
@@ -224,17 +248,29 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
     double mu0 = mu;
     double distance_to_surf = cell->Distance(*this);
     double potential_x = EulerMaruyama::NewX(*this, ds);
+    double ds_to_coll = distance_to_next_collision / cell->mat.sigma_t;
+    bool leak = (std::abs(potential_x - x) >= distance_to_surf);
+    bool collide_before_leak = (distance_to_surf >= std::abs(ds_to_coll * mu));
+    bool collide = (ds >= ds_to_coll) && collide_before_leak;
 
-    if (std::abs(potential_x - x) >= distance_to_surf) {
+    if (leak && !collide_before_leak) {
       auto [new_cell, diff_ds] = cell->ShiftCells(*this, ds);
       tally.Score(x0, mu0, diff_ds);
       mu = EulerMaruyama::NewMu(*this, diff_ds);
+      distance_to_next_collision -= (alive) ? diff_ds * cell->mat.sigma_t : 0.0;
       cell = new_cell;
       ds -= diff_ds;
+    } else if (collide) {
+      tally.Score(x0, mu0, ds_to_coll);
+      x = EulerMaruyama::NewX(*this, ds_to_coll);
+      DoHardCollision();
+      mu = EulerMaruyama::NewMu(*this, ds_to_coll);
+      ds -= ds_to_coll;
     } else {
       tally.Score(x0, mu0, ds);
       x = potential_x;
       mu = EulerMaruyama::NewMu(*this, ds);
+      distance_to_next_collision -= ds * cell->mat.sigma_t;
       ds = 0.0;
     }
     // verify in cell
@@ -265,22 +301,22 @@ int main() {
 
   auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
 
-  const size_t num_trials = 1e6;
+  const size_t num_trials = 1e5;
   double x0 = 0.0;
   double mu0 = 1.0;
   for (double ds: {0.02, 0.01, 0.005}) {
     tally.Reset();
-    printf("Starting DS: %lf\n", ds);
+    std::print("Starting DS: {0}\n", ds);
     for (auto i = 0; i < num_trials; i++) {
-      Particle p{x0, mu0, true, &cell1};
+      Particle p(x0, mu0, &cell1);
       do {
         p.Update(ds, tally);
       } while (p.alive);
     }
-    printf("\tFinished Solve\n");
+    std::print("\tFinished Solve\n");
 
     auto data_name = "ds_" + std::to_string(ds);
     tally.WriteOut(data_name, num_trials);
-    printf("\tFinished Writeout\n");
+    std::print("\tFinished Writeout\n");
   }
 }
