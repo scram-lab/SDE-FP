@@ -44,7 +44,7 @@ struct Particle {
 
   void DoHardCollision();
 
-  template <size_t XBins, size_t MuBins> 
+  template <typename Solver, size_t XBins, size_t MuBins> 
   void Update(double ds, HistogramTally<XBins, MuBins>& tally);
 
   double PathLengthToNextCollision() {return -std::log(UNIFORM_DISTRIBUTION(RNG));} 
@@ -129,7 +129,7 @@ struct Mesh {
 // Physics
 // ========================================================================= //
 
-namespace EulerMaruyama {
+struct EulerMaruyama {
   static double NewX(const Particle& p, double ds) {
     return p.x + p.mu * ds;
   }
@@ -140,7 +140,24 @@ namespace EulerMaruyama {
     mn -= trxs * mn * ds + std::sqrt(trxs * (1 - mn * mn) * ds) * xi;
     return std::clamp(mn, -1.0, 1.0);
   }
-}
+};
+
+struct Milstein {
+  static double NewX(const Particle& p, double ds) {
+    return p.x + p.mu * ds;
+  }
+  static double NewMu(const Particle& p, double ds) {
+    auto trxs = p.cell->mat.sigma_tr;
+    auto mn = p.mu;
+    double xi = NORMAL_DISTRIBUTION(RNG);
+    double dw = std::sqrt(ds) * xi;
+    double a = -trxs * mn;
+    double b = std::sqrt(trxs * (1- mn * mn));
+    double bdb = -trxs * mn;
+    mn += a*ds + b*dw + 0.5*bdb*(dw*dw - ds);
+    return std::clamp(mn, -1.0, 1.0);
+  }
+};
 
 // ========================================================================= //
 // Tally stuff
@@ -241,13 +258,13 @@ void Particle::DoHardCollision() {
   distance_to_next_collision = PathLengthToNextCollision();
 }
 
-template <size_t XBins, size_t MuBins>
+template <typename Solver, size_t XBins, size_t MuBins>
 void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
   do {
     double x0 = x;
     double mu0 = mu;
     double distance_to_surf = cell->Distance(*this);
-    double potential_x = EulerMaruyama::NewX(*this, ds);
+    double potential_x = Solver::NewX(*this, ds);
     double ds_to_coll = distance_to_next_collision / cell->mat.sigma_t;
     bool leak = (std::abs(potential_x - x) >= distance_to_surf);
     bool collide_before_leak = (distance_to_surf >= std::abs(ds_to_coll * mu));
@@ -256,20 +273,20 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
     if (leak && !collide_before_leak) {
       auto [new_cell, diff_ds] = cell->ShiftCells(*this, ds);
       tally.Score(x0, mu0, diff_ds);
-      mu = EulerMaruyama::NewMu(*this, diff_ds);
+      mu = Solver::NewMu(*this, diff_ds);
       distance_to_next_collision -= (alive) ? diff_ds * cell->mat.sigma_t : 0.0;
       cell = new_cell;
       ds -= diff_ds;
     } else if (collide) {
       tally.Score(x0, mu0, ds_to_coll);
-      x = EulerMaruyama::NewX(*this, ds_to_coll);
+      x = Solver::NewX(*this, ds_to_coll);
       DoHardCollision();
-      mu = EulerMaruyama::NewMu(*this, ds_to_coll);
+      mu = Solver::NewMu(*this, ds_to_coll);
       ds -= ds_to_coll;
     } else {
       tally.Score(x0, mu0, ds);
       x = potential_x;
-      mu = EulerMaruyama::NewMu(*this, ds);
+      mu = Solver::NewMu(*this, ds);
       distance_to_next_collision -= ds * cell->mat.sigma_t;
       ds = 0.0;
     }
@@ -310,7 +327,7 @@ int main() {
     for (auto i = 0; i < num_trials; i++) {
       Particle p(x0, mu0, &cell1);
       do {
-        p.Update(ds, tally);
+        p.Update<Milstein>(ds, tally);
       } while (p.alive);
     }
     std::print("\tFinished Solve\n");
