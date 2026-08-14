@@ -10,14 +10,27 @@
 
 #include <hdf5.h>
 #include <hdf5_hl.h>
+#include <H5Epublic.h>
+#include <omp.h>
 
 const double FP_TOLERANCE=1e-14;
 // ========================================================================= //
 // RNG
 // ========================================================================= //
-std::mt19937_64 RNG{std::random_device{}()};
-std::normal_distribution<double> NORMAL_DISTRIBUTION(0.0, 1.0);
-std::uniform_real_distribution<double> UNIFORM_DISTRIBUTION(0.0, 1.0);
+thread_local std::mt19937_64 RNG{std::random_device{}()};
+thread_local std::normal_distribution<double> NORMAL_DISTRIBUTION(0.0, 1.0);
+thread_local std::uniform_real_distribution<double> UNIFORM_DISTRIBUTION(0.0, 1.0);
+
+// ========================================================================= //
+// Settings
+// ========================================================================= //
+
+struct Settings{
+  double ds;
+  size_t num_histories = 1e5;
+  double mu0 = 1.0;
+  double x0 = 0.0;
+};
 
 // ========================================================================= //
 // Particle declaration
@@ -130,6 +143,8 @@ struct Mesh {
 // ========================================================================= //
 
 struct EulerMaruyama {
+  static constexpr std::string name{"euler-maruyama"};
+
   static double NewX(const Particle& p, double ds) {
     return p.x + p.mu * ds;
   }
@@ -137,12 +152,17 @@ struct EulerMaruyama {
     auto trxs = p.cell->mat.sigma_tr;
     auto mn = p.mu;
     double xi = NORMAL_DISTRIBUTION(RNG);
-    mn -= trxs * mn * ds + std::sqrt(trxs * (1 - mn * mn) * ds) * xi;
+    double dw = std::sqrt(ds) * xi;
+    double a = -trxs*mn;
+    double b = std::sqrt(trxs * (1 - mn * mn));
+    mn += a*ds + b*dw;
     return std::clamp(mn, -1.0, 1.0);
   }
 };
 
 struct Milstein {
+  static constexpr std::string name{"milstein"};
+
   static double NewX(const Particle& p, double ds) {
     return p.x + p.mu * ds;
   }
@@ -184,6 +204,8 @@ class HistogramTally {
     const Mesh& mu_mesh;
 
     void Score(double x, double mu, double ds) {
+      #pragma omp critical
+      {
       if (ds <= 0.0) return;
 
       auto mu_index = mu_mesh.GetIndex(mu);
@@ -218,21 +240,26 @@ class HistogramTally {
         ds -= local_ds;
 
       } while (ds > FP_TOLERANCE);
+      }
     }
 
     void Reset() {
       _tally.fill(0.0);
     }
 
-    void WriteOut(std::string dataset, size_t num_histories) {
-      auto group = H5Gcreate(file_id, dataset.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    template <typename Solver>
+    void WriteOut(const Settings& settings, double time) {
+      H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
+      auto group = H5Gopen(file_id, Solver::name.c_str(), H5P_DEFAULT);
+      if (group < 0) group = H5Gcreate(file_id, Solver::name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+      auto ds_group = H5Gcreate(group, std::to_string(settings.ds).c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
       std::array<double, XBins> x_centers;
       std::array<double, XBins> phi{};
       for (size_t x = 0; x < XBins; x++) {
         x_centers[x] = x_mesh.BinCenter(x); 
         for (size_t m = 0; m < MuBins; m++)
         {
-          _tally[x * MuBins + m] /= static_cast<double>(num_histories) * mu_mesh.Width() * x_mesh.Width();
+          _tally[x * MuBins + m] /= static_cast<double>(settings.num_histories) * mu_mesh.Width() * x_mesh.Width();
           phi[x] += _tally[x * MuBins + m];
         }
         phi[x] *= mu_mesh.Width() ;
@@ -240,11 +267,13 @@ class HistogramTally {
 
       hsize_t xdims[1] = {XBins};
       hsize_t bothdims[2] = {XBins, MuBins};
-      H5LTmake_dataset_double(group, "x_centers", 1, xdims, x_centers.data());
-      H5LTmake_dataset_double(group, "phi", 1, xdims, phi.data());
-      H5LTmake_dataset_double(group, "psi", 2, bothdims, _tally.data());
-
+      H5LTmake_dataset_double(ds_group, "x_centers", 1, xdims, x_centers.data());
+      H5LTmake_dataset_double(ds_group, "phi", 1, xdims, phi.data());
+      H5LTmake_dataset_double(ds_group, "psi", 2, bothdims, _tally.data());
+      H5LTset_attribute_double(ds_group, "/", "time", &time, 1);
+      H5Gclose(ds_group);
       H5Gclose(group);
+
     }
   
   private:
@@ -300,6 +329,30 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
 // Solver stuff
 // ========================================================================= //
 
+
+template <typename SolverType, size_t XBins, size_t MuBins>
+void RunSolve(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Cell& start_cell) {
+  tally.Reset();
+  std::print("Starting {0} DS: {1}\n", SolverType::name, settings.ds);
+  double start_time = omp_get_wtime();
+  for (size_t i = 0; i < settings.num_histories; i++) {
+    Particle p(settings.x0, settings.mu0, &start_cell);
+    do {
+      p.Update<SolverType>(settings.ds, tally);
+    } while (p.alive);
+  }
+  double runtime = omp_get_wtime() - start_time;
+  std::print("\tFinished Solve in {0}s\n", runtime);
+
+  tally.template WriteOut<SolverType>(settings, runtime);
+  std::print("\tFinished Writeout\n");
+}
+
+template <typename ...Solver, size_t XBins, size_t MuBins>
+void RunAllSolves(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Cell& start_cell) {
+  (RunSolve<Solver>(settings, tally, start_cell), ...);
+}
+
 int main() {
 
   const size_t num_x_bins = 300;
@@ -321,19 +374,9 @@ int main() {
   const size_t num_trials = 1e5;
   double x0 = 0.0;
   double mu0 = 1.0;
-  for (double ds: {0.02, 0.01, 0.005}) {
-    tally.Reset();
-    std::print("Starting DS: {0}\n", ds);
-    for (auto i = 0; i < num_trials; i++) {
-      Particle p(x0, mu0, &cell1);
-      do {
-        p.Update<Milstein>(ds, tally);
-      } while (p.alive);
-    }
-    std::print("\tFinished Solve\n");
-
-    auto data_name = "ds_" + std::to_string(ds);
-    tally.WriteOut(data_name, num_trials);
-    std::print("\tFinished Writeout\n");
+  Settings settings;
+  for (double ds: {0.02, 0.01, 0.005}) { 
+    settings.ds = ds;
+    RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
   }
 }
