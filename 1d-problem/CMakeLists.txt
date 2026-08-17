@@ -14,6 +14,12 @@ if(APPLE)
 endif()
 find_package(OpenMP REQUIRED)
 
+# optimizations
+set(CMAKE_BUILD_TYPE "Release")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-O3 -march=native)
+endif()
+
 add_executable(solver solver.cpp)
 target_include_directories(solver PRIVATE ${HDF5_INCLUDE_DIRS})
 target_link_libraries(solver PRIVATE ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES} OpenMP::OpenMP_CXX)

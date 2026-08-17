@@ -27,7 +27,8 @@ thread_local std::uniform_real_distribution<double> UNIFORM_DISTRIBUTION(0.0, 1.
 
 struct Settings{
   double ds;
-  size_t num_histories = 1e5;
+  double fraction;
+  size_t num_histories = 1e6;
   double mu0 = 1.0;
   double x0 = 0.0;
 };
@@ -253,7 +254,10 @@ class HistogramTally {
       auto group = H5Gopen(file_id, Solver::name.c_str(), H5P_DEFAULT);
       if (group < 0) group = H5Gcreate(file_id, Solver::name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
       auto ds_group = H5Gcreate(group, std::to_string(settings.ds).c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
       std::array<double, XBins> x_centers;
+      std::array<double, MuBins> mu_centers;
+      for (size_t m = 0; m < MuBins; m++) mu_centers[m] = mu_mesh.BinCenter(m);
       std::array<double, XBins> phi{};
       for (size_t x = 0; x < XBins; x++) {
         x_centers[x] = x_mesh.BinCenter(x); 
@@ -265,12 +269,16 @@ class HistogramTally {
         phi[x] *= mu_mesh.Width() ;
       }
 
+      hsize_t oned[1] = {1};
       hsize_t xdims[1] = {XBins};
+      hsize_t mudims[1] = {MuBins};
       hsize_t bothdims[2] = {XBins, MuBins};
       H5LTmake_dataset_double(ds_group, "x_centers", 1, xdims, x_centers.data());
+      H5LTmake_dataset_double(ds_group, "mu_centers", 1, mudims, mu_centers.data());
       H5LTmake_dataset_double(ds_group, "phi", 1, xdims, phi.data());
       H5LTmake_dataset_double(ds_group, "psi", 2, bothdims, _tally.data());
-      H5LTset_attribute_double(ds_group, "/", "time", &time, 1);
+      H5LTmake_dataset_double(ds_group, "time", 1, oned, &time);
+      H5LTmake_dataset_double(ds_group, "scale", 1, oned, &settings.fraction); 
       H5Gclose(ds_group);
       H5Gclose(group);
 
@@ -333,7 +341,7 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
 template <typename SolverType, size_t XBins, size_t MuBins>
 void RunSolve(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Cell& start_cell) {
   tally.Reset();
-  std::print("Starting {0} DS: {1}\n", SolverType::name, settings.ds);
+  std::print("Starting {0} DS: {1}\u00b7\u03A3_tr\n", SolverType::name, settings.fraction);
   double start_time = omp_get_wtime();
   for (size_t i = 0; i < settings.num_histories; i++) {
     Particle p(settings.x0, settings.mu0, &start_cell);
@@ -371,12 +379,10 @@ int main() {
 
   auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
 
-  const size_t num_trials = 1e5;
-  double x0 = 0.0;
-  double mu0 = 1.0;
   Settings settings;
-  for (double ds: {0.02, 0.01, 0.005}) { 
-    settings.ds = ds;
+  for (double scale: {0.1, 0.05, 0.025, 0.01}) {
+    settings.ds = mat1.sigma_tr * scale;
+    settings.fraction = scale;
     RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
   }
 }
