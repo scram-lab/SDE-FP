@@ -392,11 +392,15 @@ int main() {
   auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
 
   Settings settings;
-  double max_scale = 1.0;
-  int num_trials = 40;
   double min_soft_mfp = 1 / std::max(mat1.sigma_tr, mat2.sigma_tr);
-  for (int iscale: std::views::iota(1, num_trials+1)) {
-    double scale = max_scale / static_cast<double>(num_trials) * iscale;
+  std::vector<double> scales{
+    1.0,  0.9,  0.8,  0.7,  0.6,  0.5,  0.4,  0.3,  0.2,
+    0.1,  .09,  .08,  .07,  .06,  .05,  .04,  .03,  .02,
+    .01,  .009, .008, .007, .006, .005, .004, .003, .002,
+    .001, .0009,.0008,.0007,.0006,.0005,.0004,.0003,.0002,
+    .0001
+  };
+  for (double scale : scales) {
     settings.ds = min_soft_mfp * scale;
     settings.fraction = scale;
     RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);

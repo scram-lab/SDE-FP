@@ -6,6 +6,7 @@ import numpy as np
 
 SAVE_PATH = pathlib.Path("figures")
 SAVE_PATH.mkdir(exist_ok=True)
+NORM_ORDERS = [2, np.inf] 
 # Reference
 REF_SOLN_DICT = {}
 with h5py.File("reference_sn.h5", "r") as f:
@@ -40,7 +41,7 @@ select_DS = [SDE_DS[i] for i in range(len(SDE_DS)) if not i % (len(SDE_DS)/2)] +
 
 fig, ax = plt.subplots()
 ds_err_plot = {ds: plt.subplots() for ds in select_DS}
-error_array = np.zeros((len(SDE_SOLN_DICT), len(SDE_DS)))
+error_arrays = {order: np.zeros((len(SDE_SOLN_DICT), len(SDE_DS))) for order in NORM_ORDERS}
 for i, (method, ds_dict) in enumerate(SDE_SOLN_DICT.items()):
     for j, ds in enumerate(SDE_DS):
         x = ds_dict[ds]["x"]
@@ -49,12 +50,13 @@ for i, (method, ds_dict) in enumerate(SDE_SOLN_DICT.items()):
             ax.plot(x, phi, label=f"{method}, DS={ds}")
             ds_err_plot[ds][1].plot(x, (phi - REF_PHI) / REF_PHI, label=method)
             ds_err_plot[ds][1].set_title(rf"$\Delta_{{s}}$ = {SDE_DS_2_SCALE[ds]}$\cdot\lambda_{{\text{{mfp,tr}}}}$")
-        error_array[i, j] = np.linalg.norm(phi - REF_PHI, np.inf) / np.linalg.norm(REF_PHI, np.inf)
-df = pd.DataFrame(error_array, index=[*SDE_SOLN_DICT.keys()], columns=[str(SDE_DS_2_SCALE[ds]) for ds in SDE_DS])
+        for order in NORM_ORDERS:
+            error_arrays[order][i, j] = np.linalg.norm(phi - REF_PHI, order) / np.linalg.norm(REF_PHI, order)
+df = pd.DataFrame(error_arrays[np.inf], index=[*SDE_SOLN_DICT.keys()], columns=[str(SDE_DS_2_SCALE[ds]) for ds in SDE_DS])
 df.columns.name = "DS Scale"
 print(df)
 
-ax.plot(REF_X, REF_PHI, label="Reference")
+ax.plot(REF_X, REF_PHI, color="k", label="Reference")
 ax.axvline(0.75, color="k", ls="--", label="Material Interface")
 ax.legend()
 ax.set_xlabel(r"X Position  $\left(cm\right)$")
@@ -83,9 +85,10 @@ err_fig, err_ax = plt.subplots()
 fom_fig, fom_ax = plt.subplots()
 for i, method in enumerate(SDE_SOLN_DICT.keys()):
     times = time_array[i]
-    errors = error_array[i]
-    err_ax.plot(scales,  errors, label=method)
-    fom_ax.semilogy(scales, 1/ (times * errors**2), label=method)
+    for order in NORM_ORDERS:
+        errors = error_arrays[order][i]
+        err_ax.loglog(scales,  errors, label=method + f" $L_{{{r"\infty" if order is np.inf else order}}}$")
+    fom_ax.loglog(scales, 1/ (times * errors**2), label=method)
 for ax in [err_ax, fom_ax]:
     ax.legend()
     ax.set_xlabel(r"$\Delta_s$ scale to $\lambda_{{\text{{mfp,tr}}}}$")
