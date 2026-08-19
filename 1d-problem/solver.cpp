@@ -7,6 +7,7 @@
 #include <random>
 #include <filesystem>
 #include <print>
+#include <ranges>
 
 #include <hdf5.h>
 #include <hdf5_hl.h>
@@ -14,6 +15,7 @@
 #include <omp.h>
 
 const double FP_TOLERANCE=1e-14;
+const int NUM_THREADS=8;
 // ========================================================================= //
 // RNG
 // ========================================================================= //
@@ -199,14 +201,13 @@ class HistogramTally {
     }
 
     // x then mu
-    std::array<double, XBins * MuBins> _tally{};
+    std::array<double, XBins * MuBins * NUM_THREADS> _tally{};
     // mesh
     const Mesh& x_mesh;
     const Mesh& mu_mesh;
 
     void Score(double x, double mu, double ds) {
-      #pragma omp critical
-      {
+      auto thread_id = omp_get_thread_num();
       if (ds <= 0.0) return;
 
       auto mu_index = mu_mesh.GetIndex(mu);
@@ -214,7 +215,7 @@ class HistogramTally {
       
       if (std::abs(mu) < FP_TOLERANCE) {
         auto x_index = x_mesh.GetIndex(x);
-        _tally[x_index * MuBins + mu_index] += ds;
+        _tally[x_index * MuBins * NUM_THREADS + mu_index * NUM_THREADS + thread_id] += ds;
         return;
       }
 
@@ -226,7 +227,7 @@ class HistogramTally {
         bool at_edge = (mu > 0.0 && x_index == XBins - 1) || (mu < 0.0 && x_index ==0);
         if (distance_to_edge <= FP_TOLERANCE) {
           if (at_edge) {
-            _tally[x_index * MuBins + mu_index] += ds;
+            _tally[x_index * MuBins * NUM_THREADS + mu_index*NUM_THREADS + thread_id] += ds;
             return;
           }
           x += (mu > 0.0 ? 1.0 : -1.0) * 2 * FP_TOLERANCE;
@@ -236,12 +237,11 @@ class HistogramTally {
         double path_to_edge = distance_to_edge / std::abs(mu);
         double local_ds = std::min(path_to_edge, ds);
 
-        _tally[x_index * MuBins + mu_index] += local_ds;
+        _tally[x_index * MuBins * NUM_THREADS + mu_index * NUM_THREADS + thread_id] += local_ds;
         x += mu * local_ds;
         ds -= local_ds;
 
       } while (ds > FP_TOLERANCE);
-      }
     }
 
     void Reset() {
@@ -250,6 +250,18 @@ class HistogramTally {
 
     template <typename Solver>
     void WriteOut(const Settings& settings, double time) {
+
+      std::array<double, XBins*MuBins> psi{};
+      for (size_t x = 0; x < XBins; x++) {
+        for (size_t m = 0; m < MuBins; m++) {
+          for (size_t thread = 0; thread < NUM_THREADS; thread++)
+          {
+            psi[x * MuBins + m] += _tally[x * MuBins * NUM_THREADS + m * NUM_THREADS + thread];
+          }
+          psi[x * MuBins + m] /= static_cast<double>(settings.num_histories) * mu_mesh.Width() * x_mesh.Width();
+        }
+      }
+
       H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
       auto group = H5Gopen(file_id, Solver::name.c_str(), H5P_DEFAULT);
       if (group < 0) group = H5Gcreate(file_id, Solver::name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
@@ -263,20 +275,19 @@ class HistogramTally {
         x_centers[x] = x_mesh.BinCenter(x); 
         for (size_t m = 0; m < MuBins; m++)
         {
-          _tally[x * MuBins + m] /= static_cast<double>(settings.num_histories) * mu_mesh.Width() * x_mesh.Width();
-          phi[x] += _tally[x * MuBins + m];
+          phi[x] += psi[x * MuBins + m];
         }
         phi[x] *= mu_mesh.Width() ;
       }
 
       hsize_t oned[1] = {1};
-      hsize_t xdims[1] = {XBins};
+      hsize_t xdims[1] = {XBins};;
       hsize_t mudims[1] = {MuBins};
       hsize_t bothdims[2] = {XBins, MuBins};
       H5LTmake_dataset_double(ds_group, "x_centers", 1, xdims, x_centers.data());
       H5LTmake_dataset_double(ds_group, "mu_centers", 1, mudims, mu_centers.data());
       H5LTmake_dataset_double(ds_group, "phi", 1, xdims, phi.data());
-      H5LTmake_dataset_double(ds_group, "psi", 2, bothdims, _tally.data());
+      H5LTmake_dataset_double(ds_group, "psi", 2, bothdims, psi.data());
       H5LTmake_dataset_double(ds_group, "time", 1, oned, &time);
       H5LTmake_dataset_double(ds_group, "scale", 1, oned, &settings.fraction); 
       H5Gclose(ds_group);
@@ -343,6 +354,7 @@ void RunSolve(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Ce
   tally.Reset();
   std::print("Starting {0} DS: {1}\u00b7\u03A3_tr\n", SolverType::name, settings.fraction);
   double start_time = omp_get_wtime();
+  #pragma omp parallel for 
   for (size_t i = 0; i < settings.num_histories; i++) {
     Particle p(settings.x0, settings.mu0, &start_cell);
     do {
@@ -362,6 +374,7 @@ void RunAllSolves(const Settings& settings, HistogramTally<XBins, MuBins>& tally
 }
 
 int main() {
+  omp_set_num_threads(NUM_THREADS);
 
   const size_t num_x_bins = 300;
   const size_t num_mu_bins = 100;
@@ -380,7 +393,8 @@ int main() {
   auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
 
   Settings settings;
-  for (double scale: {0.1, 0.05, 0.025, 0.01}) {
+  for (int power: std::views::iota(0, 10)) {
+    double scale = 0.1 * std::pow(2, -power);
     settings.ds = mat1.sigma_tr * scale;
     settings.fraction = scale;
     RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
