@@ -151,9 +151,8 @@ struct EulerMaruyama {
   static double NewX(const Particle& p, double ds) {
     return p.x + p.mu * ds;
   }
-  static double NewMu(const Particle& p, double ds) {
+  static double NewMu(const Particle& p, double mn, double ds) {
     auto trxs = p.cell->mat.sigma_tr;
-    auto mn = p.mu;
     double xi = NORMAL_DISTRIBUTION(RNG);
     double dw = std::sqrt(ds) * xi;
     double a = -trxs*mn;
@@ -169,9 +168,8 @@ struct Milstein {
   static double NewX(const Particle& p, double ds) {
     return p.x + p.mu * ds;
   }
-  static double NewMu(const Particle& p, double ds) {
+  static double NewMu(const Particle& p, double mn, double ds) {
     auto trxs = p.cell->mat.sigma_tr;
-    auto mn = p.mu;
     double xi = NORMAL_DISTRIBUTION(RNG);
     double dw = std::sqrt(ds) * xi;
     double a = -trxs * mn;
@@ -308,9 +306,10 @@ void Particle::DoHardCollision() {
 
 template <typename Solver, size_t XBins, size_t MuBins>
 void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
+  double ds_score=ds;
+  double mu_update = mu;
   do {
     double x0 = x;
-    double mu0 = mu;
     double distance_to_surf = cell->Distance(*this);
     double potential_x = Solver::NewX(*this, ds);
     double ds_to_coll = distance_to_next_collision / cell->mat.sigma_t;
@@ -320,21 +319,21 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
 
     if (leak && !collide_before_leak) {
       auto [new_cell, diff_ds] = cell->ShiftCells(*this, ds);
-      tally.Score(x0, mu0, diff_ds);
-      mu = Solver::NewMu(*this, diff_ds);
+      tally.Score(x0, mu, diff_ds);
+      mu_update = Solver::NewMu(*this, mu_update, diff_ds);
       distance_to_next_collision -= (alive) ? diff_ds * cell->mat.sigma_t : 0.0;
       cell = new_cell;
       ds -= diff_ds;
     } else if (collide) {
-      tally.Score(x0, mu0, ds_to_coll);
+      tally.Score(x0, mu, ds_to_coll);
       x = Solver::NewX(*this, ds_to_coll);
       DoHardCollision();
-      mu = Solver::NewMu(*this, ds_to_coll);
+      mu_update = Solver::NewMu(*this, mu_update, ds_to_coll);
       ds -= ds_to_coll;
     } else {
-      tally.Score(x0, mu0, ds);
+      tally.Score(x0, mu, ds);
       x = potential_x;
-      mu = Solver::NewMu(*this, ds);
+      mu = Solver::NewMu(*this, mu_update, ds);
       distance_to_next_collision -= ds * cell->mat.sigma_t;
       ds = 0.0;
     }
@@ -393,9 +392,12 @@ int main() {
   auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
 
   Settings settings;
-  for (int power: std::views::iota(0, 10)) {
-    double scale = 0.1 * std::pow(2, -power);
-    settings.ds = mat1.sigma_tr * scale;
+  double max_scale = 1.0;
+  int num_trials = 40;
+  double min_soft_mfp = 1 / std::max(mat1.sigma_tr, mat2.sigma_tr);
+  for (int iscale: std::views::iota(1, num_trials+1)) {
+    double scale = max_scale / static_cast<double>(num_trials) * iscale;
+    settings.ds = min_soft_mfp * scale;
     settings.fraction = scale;
     RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
   }
