@@ -70,8 +70,14 @@ struct Particle {
 // Geometry stuff
 // ========================================================================= //
 struct Material {
-  double sigma_tr;
-  double sigma_t;
+  Material(double sigma_s0, double sigma_t, double eta, double mu_c) 
+    : sigma_t(sigma_t),
+      sigma_sl(sigma_s0*eta*(1 + mu_c) / (1-mu_c+2*eta)),
+      sigma_tr(2*sigma_s0*eta*(1+eta)*(std::log((1-mu_c + 2*eta)/(2*eta)) - (1-mu_c)/(1-mu_c+2*eta)))
+    {}
+  const double sigma_sl;
+  const double sigma_tr;
+  const double sigma_t;
 };
 
 struct Cell {
@@ -381,10 +387,12 @@ int main() {
   Mesh x_mesh{0, 3.0, num_x_bins};
   Mesh mu_mesh{-1.0, 1.0, num_mu_bins};
 
-  Material mat1{1.6422722822026428e-01, 100.0};
+  Material mat1(100.0, 100.0, 1e-4, -1.0);
+  std::print("Material 1: {0}, {1}\n", mat1.sigma_tr, mat1.sigma_sl);
   Cell cell1{0.0, 0.75, mat1, nullptr, nullptr};
 
-  Material mat2{3.6612717220096727e+00, 50.0};
+  Material mat2(50.0, 50.0, 1e-2, -1.0);
+  std::print("Material 2: {0}, {1}\n", mat2.sigma_tr, mat2.sigma_sl);
   Cell cell2{0.75, 3.0, mat2};
   cell2.left = &cell1;
   cell1.right = &cell2;
@@ -400,7 +408,7 @@ int main() {
     .001, .0009,.0008,.0007,.0006,.0005,.0004,.0003,.0002,
     .0001
   };
-  for (double scale : scales) {
+  for (double scale : {1.0, 0.1, 0.01}) {
     settings.ds = min_soft_mfp * scale;
     settings.fraction = scale;
     RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
