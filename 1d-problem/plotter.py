@@ -4,6 +4,10 @@ import matplotlib.pyplot as plt
 import pandas as pd 
 import numpy as np
 
+OUTPUT_FILE = "sde_output.h5"
+# OUTPUT_FILE = "500trials.h5"
+# OUTPUT_FILE = "logspace_e-4_e0.h5"
+
 SAVE_PATH = pathlib.Path("figures")
 SAVE_PATH.mkdir(exist_ok=True)
 NORM_ORDERS = [2, np.inf] 
@@ -22,7 +26,7 @@ REF_MU, REF_PSI = REF_SOLN_DICT["mu"], REF_SOLN_DICT["psi"]
 SDE_DS = set()
 SDE_DS_2_SCALE = {}
 SDE_SOLN_DICT = {}
-with h5py.File("sde_output.h5", "r") as sde_file:
+with h5py.File(OUTPUT_FILE, "r") as sde_file:
     for method, solver_solns in sde_file.items():
         SDE_SOLN_DICT[method.title()] = {}
         for ds, ds_sets in solver_solns.items():
@@ -46,8 +50,9 @@ for i, (method, ds_dict) in enumerate(SDE_SOLN_DICT.items()):
     for j, ds in enumerate(SDE_DS):
         x = ds_dict[ds]["x"]
         phi = ds_dict[ds]["phi"]
+        ax.plot(x, phi, label=rf"{method}, ${SDE_DS_2_SCALE[ds]}\cdot\lambda_{{\text{{mfp,tr}}}}$")
         if ds in select_DS:
-            ax.plot(x, phi, label=f"{method}, DS={ds}")
+            ## Plot w markers
             ds_err_plot[ds][1].plot(x, (phi - REF_PHI) / REF_PHI, label=method)
             ds_err_plot[ds][1].set_title(rf"$\Delta_{{s}}$ = {SDE_DS_2_SCALE[ds]}$\cdot\lambda_{{\text{{mfp,tr}}}}$")
         for order in NORM_ORDERS:
