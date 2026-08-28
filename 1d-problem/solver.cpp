@@ -28,6 +28,8 @@ thread_local std::uniform_real_distribution<double> UNIFORM_DISTRIBUTION(0.0, 1.
 // ========================================================================= //
 
 struct Settings{
+  std::string name;
+  std::vector<double> mu_c;
   double ds;
   double fraction;
   size_t num_histories = 1e6;
@@ -71,19 +73,33 @@ struct Particle {
 // ========================================================================= //
 struct Material {
   Material(double sigma_s0, double sigma_t, double eta, double mu_c) 
-    : sigma_t(sigma_t),
+    : mu_c(mu_c), eta(eta),
+      sigma_t(sigma_t),
       sigma_sl(sigma_s0*eta*(1 + mu_c) / (1-mu_c+2*eta)),
-      sigma_tr(2*sigma_s0*eta*(1+eta)*(std::log((1-mu_c + 2*eta)/(2*eta)) - (1-mu_c)/(1-mu_c+2*eta)))
+      sigma_tr(2*sigma_s0*eta*(1+eta)*(std::log((1-mu_c + 2*eta)/(2*eta)) - (1-mu_c)/(1-mu_c+2*eta))),
+      sctr_ratio(sigma_sl / sigma_t),
+      _C((1 - mu_c + 2*eta) * (2 + 2*eta) / (1 + mu_c))
     {}
+  const double mu_c;
+  const double eta;
   const double sigma_sl;
   const double sigma_tr;
   const double sigma_t;
+  const double sctr_ratio;
+  const double _C;
+
+  double InvCDFScattering() const {
+    double xi = UNIFORM_DISTRIBUTION(RNG);
+    return 1 + 2*eta - 2*_C*(1+eta) / (_C + 2*(1+eta)*xi);
+  }
 };
 
 struct Cell {
+
+  Cell(double xmin, double xmax) : xmin(xmin), xmax(xmax), mat(nullptr) {};
   const double xmin;
   const double xmax;
-  const Material& mat;
+  Material* mat;
 
   Cell* right = nullptr;
   Cell* left = nullptr;
@@ -158,7 +174,7 @@ struct EulerMaruyama {
     return p.x + p.mu * ds;
   }
   static double NewMu(const Particle& p, double mn, double ds) {
-    auto trxs = p.cell->mat.sigma_tr;
+    auto trxs = p.cell->mat->sigma_tr;
     double xi = NORMAL_DISTRIBUTION(RNG);
     double dw = std::sqrt(ds) * xi;
     double a = -trxs*mn;
@@ -175,7 +191,7 @@ struct Milstein {
     return p.x + p.mu * ds;
   }
   static double NewMu(const Particle& p, double mn, double ds) {
-    auto trxs = p.cell->mat.sigma_tr;
+    auto trxs = p.cell->mat->sigma_tr;
     double xi = NORMAL_DISTRIBUTION(RNG);
     double dw = std::sqrt(ds) * xi;
     double a = -trxs * mn;
@@ -269,7 +285,7 @@ class HistogramTally {
       H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
       auto group = H5Gopen(file_id, Solver::name.c_str(), H5P_DEFAULT);
       if (group < 0) group = H5Gcreate(file_id, Solver::name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-      auto ds_group = H5Gcreate(group, std::to_string(settings.ds).c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+      auto sub_group = H5Gcreate(group, settings.name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
       std::array<double, XBins> x_centers;
       std::array<double, MuBins> mu_centers;
@@ -285,16 +301,18 @@ class HistogramTally {
       }
 
       hsize_t oned[1] = {1};
-      hsize_t xdims[1] = {XBins};;
+      hsize_t xdims[1] = {XBins};
       hsize_t mudims[1] = {MuBins};
       hsize_t bothdims[2] = {XBins, MuBins};
-      H5LTmake_dataset_double(ds_group, "x_centers", 1, xdims, x_centers.data());
-      H5LTmake_dataset_double(ds_group, "mu_centers", 1, mudims, mu_centers.data());
-      H5LTmake_dataset_double(ds_group, "phi", 1, xdims, phi.data());
-      H5LTmake_dataset_double(ds_group, "psi", 2, bothdims, psi.data());
-      H5LTmake_dataset_double(ds_group, "time", 1, oned, &time);
-      H5LTmake_dataset_double(ds_group, "scale", 1, oned, &settings.fraction); 
-      H5Gclose(ds_group);
+      hsize_t mat_dims[1] = {settings.mu_c.size()};
+      H5LTmake_dataset_double(sub_group, "x_centers", 1, xdims, x_centers.data());
+      H5LTmake_dataset_double(sub_group, "mu_centers", 1, mudims, mu_centers.data());
+      H5LTmake_dataset_double(sub_group, "phi", 1, xdims, phi.data());
+      H5LTmake_dataset_double(sub_group, "psi", 2, bothdims, psi.data());
+      H5LTmake_dataset_double(sub_group, "time", 1, oned, &time);
+      H5LTmake_dataset_double(sub_group, "scale", 1, oned, &settings.fraction); 
+      H5LTmake_dataset_double(sub_group, "mu_c", 1, mat_dims, settings.mu_c.data()); 
+      H5Gclose(sub_group);
       H5Gclose(group);
 
     }
@@ -308,17 +326,27 @@ class HistogramTally {
 // ========================================================================= //
 void Particle::DoHardCollision() {
   distance_to_next_collision = PathLengthToNextCollision();
+  // check if it actually scatters or not
+  if (UNIFORM_DISTRIBUTION(RNG) >= cell->mat->sctr_ratio) return;
+
+  //update mu
+  double mu_s = cell->mat->InvCDFScattering(); 
+  double sin_mu_s = std::sqrt(std::max(0.0, 1 - mu_s * mu_s));
+  double sin_mu = std::sqrt(std::max(0.0, 1 - mu*mu));
+  double phi = UNIFORM_DISTRIBUTION(RNG) * 2 * M_PI;
+
+  double mn = mu*mu_s + sin_mu*sin_mu_s * std::cos(phi);
+  this->mu = std::clamp(mn, -1.0, 1.0);
 }
 
 template <typename Solver, size_t XBins, size_t MuBins>
 void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
   double ds_score=ds;
-  double mu_update = mu;
   do {
     double x0 = x;
     double distance_to_surf = cell->Distance(*this);
     double potential_x = Solver::NewX(*this, ds);
-    double ds_to_coll = distance_to_next_collision / cell->mat.sigma_t;
+    double ds_to_coll = distance_to_next_collision / cell->mat->sigma_t;
     bool leak = (std::abs(potential_x - x) >= distance_to_surf);
     bool collide_before_leak = (distance_to_surf >= std::abs(ds_to_coll * mu));
     bool collide = (ds >= ds_to_coll) && collide_before_leak;
@@ -326,21 +354,21 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
     if (leak && !collide_before_leak) {
       auto [new_cell, diff_ds] = cell->ShiftCells(*this, ds);
       tally.Score(x0, mu, diff_ds);
-      mu_update = Solver::NewMu(*this, mu_update, diff_ds);
-      distance_to_next_collision -= (alive) ? diff_ds * cell->mat.sigma_t : 0.0;
+      mu = Solver::NewMu(*this, mu, diff_ds);
+      distance_to_next_collision -= (alive) ? diff_ds * cell->mat->sigma_t : 0.0;
       cell = new_cell;
       ds -= diff_ds;
     } else if (collide) {
       tally.Score(x0, mu, ds_to_coll);
       x = Solver::NewX(*this, ds_to_coll);
       DoHardCollision();
-      mu_update = Solver::NewMu(*this, mu_update, ds_to_coll);
+      mu = Solver::NewMu(*this, mu, ds_to_coll);
       ds -= ds_to_coll;
     } else {
       tally.Score(x0, mu, ds);
       x = potential_x;
-      mu = Solver::NewMu(*this, mu_update, ds);
-      distance_to_next_collision -= ds * cell->mat.sigma_t;
+      mu = Solver::NewMu(*this, mu, ds);
+      distance_to_next_collision -= ds * cell->mat->sigma_t;
       ds = 0.0;
     }
     // verify in cell
@@ -386,31 +414,32 @@ int main() {
 
   Mesh x_mesh{0, 3.0, num_x_bins};
   Mesh mu_mesh{-1.0, 1.0, num_mu_bins};
+  auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
 
-  Material mat1(100.0, 100.0, 1e-4, -1.0);
-  std::print("Material 1: {0}, {1}\n", mat1.sigma_tr, mat1.sigma_sl);
-  Cell cell1{0.0, 0.75, mat1, nullptr, nullptr};
-
-  Material mat2(50.0, 50.0, 1e-2, -1.0);
-  std::print("Material 2: {0}, {1}\n", mat2.sigma_tr, mat2.sigma_sl);
-  Cell cell2{0.75, 3.0, mat2};
+  Cell cell1(0.0, 0.75);
+  Cell cell2(0.75, 3.0);
   cell2.left = &cell1;
   cell1.right = &cell2;
 
-  auto tally = HistogramTally<num_x_bins, num_mu_bins>(x_mesh, mu_mesh);
-
   Settings settings;
-  double min_soft_mfp = 1 / std::max(mat1.sigma_tr, mat2.sigma_tr);
-  std::vector<double> scales{
-    1.0,  0.9,  0.8,  0.7,  0.6,  0.5,  0.4,  0.3,  0.2,
-    0.1,  .09,  .08,  .07,  .06,  .05,  .04,  .03,  .02,
-    .01,  .009, .008, .007, .006, .005, .004, .003, .002,
-    .001, .0009,.0008,.0007,.0006,.0005,.0004,.0003,.0002,
-    .0001
-  };
-  for (double scale : {1.0, 0.1, 0.01}) {
-    settings.ds = min_soft_mfp * scale;
-    settings.fraction = scale;
+  settings.fraction = 0.01;
+  for (double mu_c : { 1.0,  0.99,  /*0.98,  0.97,  0.96,  0.95,  0.94,  0.93,  0.92,  0.91, 
+                       0.9,   0.8,   0.7,   0.6,   0.5,   0.4,   0.3,   0.2,   0.1,   0.0,
+                      -0.1,  -0.2,  -0.3,  -0.4,  -0.5,  -0.6,  -0.7,  -0.8,  -0.9, 
+                      -0.91, -0.92, -0.93, -0.94, -0.95, -0.96, -0.97, -0.98, */-0.99, -1.0}) {
+    Material mat1(100.0, 100.0, 1e-4, mu_c);
+    cell1.mat = &mat1;
+
+    Material mat2(50.0, 50.0, 1e-2, mu_c);
+    cell2.mat = &mat2;
+
+    settings.mu_c = {mat1.mu_c, mat2.mu_c};
+
+    double min_soft_mfp = 1 / std::max(mat1.sigma_tr, mat2.sigma_tr);
+    settings.ds = min_soft_mfp * settings.fraction;
+
+    settings.name = std::to_string(mu_c);
+
     RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
   }
 }
