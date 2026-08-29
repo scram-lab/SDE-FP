@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 from itertools import cycle
 from pathlib import Path
 
-SAVEPATH = Path("figures")
+SAVEPATH = Path("../figures")
 
 colorer = cycle(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 

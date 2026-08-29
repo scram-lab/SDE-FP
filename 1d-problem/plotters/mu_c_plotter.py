@@ -6,6 +6,17 @@ import seaborn as sns
 cmap = sns.color_palette("flare", as_cmap=True)
 import numpy as np
 
+REFERENCE_PATH = pathlib.Path("../reference")
+REFERENCE_FILE = REFERENCE_PATH / "reference_sn.h5"
+
+OUTPUTS_PATH = pathlib.Path("../outputs")
+OUTPUT_FILE = OUTPUTS_PATH / "mu_c_range_depC.h5"
+
+SAVE_PATH = pathlib.Path("../figures")
+SAVE_PATH.mkdir(exist_ok=True)
+NORM_ORDERS = [2, np.inf] 
+
+# Leakes results from screen grab
 LEAKEAS = np.array([
     0, 2.365591397849462,
     0.06013878180416343, 2.575757575757576,
@@ -61,14 +72,9 @@ LEAKEAS = np.array([
 ]).reshape(-1, 2) 
 REF_BX, REF_BOLTZMANN = LEAKEAS[:, 0], LEAKEAS[:, 1]
 
-OUTPUT_FILE = "mu_c_range_depC.h5"
-
-SAVE_PATH = pathlib.Path("figures")
-SAVE_PATH.mkdir(exist_ok=True)
-NORM_ORDERS = [2, np.inf] 
 # Reference
 REF_SOLN_DICT = {}
-with h5py.File("reference_sn.h5", "r") as f:
+with h5py.File(REFERENCE_FILE, "r") as f:
     f.visititems(
         lambda name, obj: REF_SOLN_DICT.__setitem__(
             name, obj[()] if isinstance(obj, h5py.Dataset) else None
@@ -95,7 +101,7 @@ with h5py.File(OUTPUT_FILE, "r") as sde_file:
 LINESTYLES = {method: ['--', '-.', ":"][i] for i, method in enumerate(SDE_SOLN_DICT.keys())}
 SDE_MU_C = sorted(SDE_MU_C)
 METHODS = sorted(SDE_SOLN_DICT.keys())
-SDE_MU_C = [-1.0, 1.0]
+#SDE_MU_C = [-1.0, 1.0]
 
 error_arrays = {order: np.zeros((len(SDE_SOLN_DICT), len(SDE_MU_C))) for order in NORM_ORDERS}
 time_array = np.zeros((len(SDE_SOLN_DICT), len(SDE_MU_C)))

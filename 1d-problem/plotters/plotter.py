@@ -4,16 +4,18 @@ import matplotlib.pyplot as plt
 import pandas as pd 
 import numpy as np
 
-OUTPUT_FILE = "sde_output.h5"
-# OUTPUT_FILE = "500trials.h5"
-# OUTPUT_FILE = "logspace_e-4_e0.h5"
+REFERENCE_PATH = pathlib.Path("../reference")
+REFERENCE_FILE = REFERENCE_PATH / "reference_sn.h5"
 
-SAVE_PATH = pathlib.Path("figures")
+OUTPUT_PATH = pathlib.Path("../outputs")
+OUTPUT_FILE = OUTPUT_PATH / "logspace_e-4_e0.h5"
+
+SAVE_PATH = pathlib.Path("../figures")
 SAVE_PATH.mkdir(exist_ok=True)
 NORM_ORDERS = [2, np.inf] 
 # Reference
 REF_SOLN_DICT = {}
-with h5py.File("reference_sn.h5", "r") as f:
+with h5py.File(REFERENCE_FILE, "r") as f:
     f.visititems(
         lambda name, obj: REF_SOLN_DICT.__setitem__(
             name, obj[()] if isinstance(obj, h5py.Dataset) else None
