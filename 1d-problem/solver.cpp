@@ -210,7 +210,7 @@ class HistogramTally {
   public:
     HistogramTally(const Mesh& x, const Mesh& mu): x_mesh(x), mu_mesh(mu){
       namespace fs = std::filesystem;
-      fs::path fpath = "sde_output.h5";
+      fs::path fpath = "outputs/sde_output.h5";
       if (fs::exists(fpath)) fs::remove(fpath); 
       
       file_id = H5Fcreate(fpath.c_str(), H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT);
