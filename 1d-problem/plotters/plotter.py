@@ -1,6 +1,9 @@
 import pathlib
 import h5py
+from itertools import cycle
 import matplotlib.pyplot as plt
+import seaborn as sns
+cmap = sns.color_palette("flare", as_cmap=True)
 import pandas as pd 
 import numpy as np
 
@@ -10,8 +13,8 @@ REFERENCE_FILE = REFERENCE_PATH / "reference_sn.h5"
 OUTPUT_PATH = pathlib.Path("../outputs")
 OUTPUT_FILE = OUTPUT_PATH / "logspace_e-4_e0.h5"
 
-SAVE_PATH = pathlib.Path("../figures")
-SAVE_PATH.mkdir(exist_ok=True)
+SAVE_PATH = pathlib.Path("../figures/ds_variation")
+SAVE_PATH.mkdir(exist_ok=True, parents=True)
 NORM_ORDERS = [2, np.inf] 
 # Reference
 REF_SOLN_DICT = {}
@@ -43,65 +46,62 @@ with h5py.File(OUTPUT_FILE, "r") as sde_file:
             SDE_DS_2_SCALE[float(ds)] = ds_sets["scale"][()][0]
 
 SDE_DS = sorted(SDE_DS, reverse=True)
-select_DS = [SDE_DS[i] for i in range(len(SDE_DS)) if not i % (len(SDE_DS)/2)] + [SDE_DS[-1]]
+select_DS = [SDE_DS[i] for i in range(len(SDE_DS)) if not i % ((len(SDE_DS) - 1)/4) and SDE_DS[i] != max(SDE_DS)]
 
-fig, ax = plt.subplots()
-ds_err_plot = {ds: plt.subplots() for ds in select_DS}
 error_arrays = {order: np.zeros((len(SDE_SOLN_DICT), len(SDE_DS))) for order in NORM_ORDERS}
 for i, (method, ds_dict) in enumerate(SDE_SOLN_DICT.items()):
+    fig, ax = plt.subplots()
+    err_fig, err_ax = plt.subplots()
     for j, ds in enumerate(SDE_DS):
+        scale = SDE_DS_2_SCALE[ds]
         x = ds_dict[ds]["x"]
         phi = ds_dict[ds]["phi"]
-        ax.plot(x, phi, label=rf"{method}, ${SDE_DS_2_SCALE[ds]}\cdot\lambda_{{\text{{mfp,tr}}}}$")
+        ax.plot(x, phi, color = cmap(scale))
         if ds in select_DS:
             ## Plot w markers
-            ds_err_plot[ds][1].plot(x, (phi - REF_PHI) / REF_PHI, label=method)
-            ds_err_plot[ds][1].set_title(rf"$\Delta_{{s}}$ = {SDE_DS_2_SCALE[ds]}$\cdot\lambda_{{\text{{mfp,tr}}}}$")
+            err_ax.plot(x, (phi - REF_PHI) / REF_PHI, label=rf"$\Delta_{{s}}$ = {scale}$\cdot\lambda_{{\text{{mfp,tr}}}}$")
         for order in NORM_ORDERS:
             error_arrays[order][i, j] = np.linalg.norm(phi - REF_PHI, order) / np.linalg.norm(REF_PHI, order)
-df = pd.DataFrame(error_arrays[np.inf], index=[*SDE_SOLN_DICT.keys()], columns=[str(SDE_DS_2_SCALE[ds]) for ds in SDE_DS])
-df.columns.name = "DS Scale"
-print(df)
 
-ax.plot(REF_X, REF_PHI, color="k", label="Reference")
-ax.axvline(0.75, color="k", ls="--", label="Material Interface")
-ax.legend()
-ax.set_xlabel(r"X Position  $\left(cm\right)$")
-ax.set_ylabel(r"$\phi$  $\left(cm^{2}\cdot s^{-1}\right)$")
-fig.savefig(SAVE_PATH / "phi")
-
-for ds in select_DS:
-    fig, ax = ds_err_plot[ds]
-    ax.axvline(0.75, color="k", ls="--", label="Material Interface")
+    # normal figure
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
+    sm.set_array([])
+    fig.colorbar(sm, ax=ax, label=r"$\Delta_s$ Relative to $\Sigma_{tr}$")
+    ax.plot(REF_X, REF_PHI, label=r"Reference $S_{64}$ Fokker-Planck", color="#0072B2", ls="--", lw=1.5)
+    ax.axvline(0.75, color="k", ls="--")
     ax.legend()
     ax.set_xlabel(r"X Position  $\left(cm\right)$")
-    ax.set_ylabel("Relative Error (to reference)")
-    fig.savefig(SAVE_PATH / f"error_{SDE_DS_2_SCALE[ds]}.pdf")
-    if ds not in select_DS: plt.close(fig)
+    ax.set_ylabel(r"$\phi$  $\left(cm^{2}\cdot s^{-1}\right)$")
+    fig.savefig(SAVE_PATH / f"phi_{method}")
+
+    # error figure
+    err_ax.axvline(0.75, color="k", ls="--")
+    err_ax.legend()
+    err_ax.set_xlabel(r"X Position  $\left(cm\right)$")
+    err_ax.set_ylabel("Relative Error (to reference)")
+    err_fig.savefig(SAVE_PATH / f"ds_slice_error_{method}.pdf")
 
 time_array = np.zeros((len(SDE_SOLN_DICT), len(SDE_DS)))
 for i, (method, ds_dict) in enumerate(SDE_SOLN_DICT.items()):
     for j, ds in enumerate(SDE_DS):
         time_array[i, j] = ds_dict[ds]["time"]
-df = pd.DataFrame(time_array, index=[*SDE_SOLN_DICT.keys()], columns=[str(SDE_DS_2_SCALE[ds]) for ds in SDE_DS])
-df.columns.name = "DS Scale"
-print(df)
 
 scales = [float(SDE_DS_2_SCALE[ds]) for ds in SDE_DS]
+markers = cycle(["o", "x", "^", "s"])
 err_fig, err_ax = plt.subplots()
-fom_fig, fom_ax = plt.subplots()
 for i, method in enumerate(SDE_SOLN_DICT.keys()):
     times = time_array[i]
     for order in NORM_ORDERS:
         errors = error_arrays[order][i]
-        err_ax.loglog(scales,  errors, label=method + f" $L_{{{r"\infty" if order is np.inf else order}}}$")
-    fom_ax.loglog(scales, 1/ (times * errors**2), label=method)
-for ax in [err_ax, fom_ax]:
-    ax.legend()
-    ax.set_xlabel(r"$\Delta_s$ scale to $\lambda_{{\text{{mfp,tr}}}}$")
+        err_ax.loglog(
+            scales,  errors,
+            marker=next(markers),
+            ms=3.5,
+            label=f"{method}, $L_{{{r"\infty" if order is np.inf else order}}}$",
+        )
+err_ax.legend()
+err_ax.set_xlabel(r"$\Delta_s$ scale to $\lambda_{{\text{{mfp,tr}}}}$")
 err_ax.set_ylabel("Relative Error (to reference)")
 err_fig.savefig(SAVE_PATH/"rel_err")
-fom_ax.set_ylabel(r"Figure of Merit  $\left[\frac{1}{t_{r}\sigma_{r}^{2}}\right]$")
-fom_fig.savefig(SAVE_PATH/"fom")
 
 plt.show()
