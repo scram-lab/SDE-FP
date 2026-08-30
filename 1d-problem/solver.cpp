@@ -32,6 +32,7 @@ struct Settings{
   std::vector<double> mu_c;
   double ds;
   double fraction;
+  size_t num_trials;
   size_t num_histories = 1e6;
   double mu0 = 1.0;
   double x0 = 0.0;
@@ -386,7 +387,6 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
 template <typename SolverType, size_t XBins, size_t MuBins>
 void RunSolve(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Cell& start_cell) {
   tally.Reset();
-  std::print("Starting {0}: \u03BC_c = {1}, {2}\u00b7\u03A3_tr\n", SolverType::name, settings.mu_c[0], settings.fraction);
   double start_time = omp_get_wtime();
   #pragma omp parallel for 
   for (size_t i = 0; i < settings.num_histories; i++) {
@@ -396,14 +396,13 @@ void RunSolve(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Ce
     } while (p.alive);
   }
   double runtime = omp_get_wtime() - start_time;
-  std::print("\tFinished Solve in {0}s\n", runtime);
-
   tally.template WriteOut<SolverType>(settings, runtime);
-  std::print("\tFinished Writeout\n");
+  std::print("\tFinished {0} solve in {1}s\n", SolverType::name, runtime);
 }
 
 template <typename ...Solver, size_t XBins, size_t MuBins>
 void RunAllSolves(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Cell& start_cell) {
+  std::print("Running {0} of {1}:\n", settings.name, settings.num_trials);
   (RunSolve<Solver>(settings, tally, start_cell), ...);
 }
 
@@ -423,9 +422,11 @@ int main() {
   cell1.right = &cell2;
 
   Settings settings;
+  settings.num_histories = 1e6;
   size_t trial_id = 0;
-  std::vector<double> muc_sweep_values{1.0,  0.999, 0.998, 0.997, 0.996, 0.995, 0.994, 0.993, 0.992, 0.991, 0.99, 0.98,  0.97,  0.96,  0.95,  0.94,  0.93,  0.92,  0.91,  -1.0};
+  std::vector<double> muc_sweep_values{0.999, 0.998, 0.997, 0.996, 0.995, 0.994, 0.993, 0.992, 0.991, 0.99, 0.98,  0.97,  0.96,  0.95,  0.94,  0.93,  0.92,  0.91, 0.90, -1.0};
   std::vector<double> scale_sweep_values{0.1, 0.05, 0.025, 0.01, 0.005};
+  settings.num_trials = muc_sweep_values.size() * scale_sweep_values.size();
   for (double mu_c : muc_sweep_values) {
     Material mat1(100.0, 100.0, 1e-4, mu_c);
     cell1.mat = &mat1;
@@ -446,4 +447,17 @@ int main() {
       RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
     }
   }
+
+  // reference solution 
+  Material mat1(100.0, 100.0, 1e-4, 1.0);
+  cell1.mat = &mat1;
+
+  Material mat2(50.0, 50.0, 1e-2, 1.0);
+  cell2.mat = &mat2;
+
+  settings.mu_c = {mat1.mu_c, mat2.mu_c};
+  settings.fraction = 1.0; // doesn't matter
+  settings.ds = 1.0; // also doesn't matter
+  settings.name = "Reference Boltzmann";
+  RunAllSolves<Milstein>(settings, tally, cell1);
 }
