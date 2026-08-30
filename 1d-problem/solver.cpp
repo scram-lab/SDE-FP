@@ -311,6 +311,7 @@ class HistogramTally {
       H5LTmake_dataset_double(sub_group, "psi", 2, bothdims, psi.data());
       H5LTmake_dataset_double(sub_group, "time", 1, oned, &time);
       H5LTmake_dataset_double(sub_group, "scale", 1, oned, &settings.fraction); 
+      H5LTmake_dataset_double(sub_group, "ds", 1, oned, &settings.ds); 
       H5LTmake_dataset_double(sub_group, "mu_c", 1, mat_dims, settings.mu_c.data()); 
       H5Gclose(sub_group);
       H5Gclose(group);
@@ -385,7 +386,7 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
 template <typename SolverType, size_t XBins, size_t MuBins>
 void RunSolve(const Settings& settings, HistogramTally<XBins, MuBins>& tally, Cell& start_cell) {
   tally.Reset();
-  std::print("Starting {0} DS: {1}\u00b7\u03A3_tr\n", SolverType::name, settings.fraction);
+  std::print("Starting {0}: \u03BC_c = {1}, {2}\u00b7\u03A3_tr\n", SolverType::name, settings.mu_c[0], settings.fraction);
   double start_time = omp_get_wtime();
   #pragma omp parallel for 
   for (size_t i = 0; i < settings.num_histories; i++) {
@@ -422,11 +423,10 @@ int main() {
   cell1.right = &cell2;
 
   Settings settings;
-  settings.fraction = 0.01;
-  for (double mu_c : { 1.0,  0.99,  /*0.98,  0.97,  0.96,  0.95,  0.94,  0.93,  0.92,  0.91, 
-                       0.9,   0.8,   0.7,   0.6,   0.5,   0.4,   0.3,   0.2,   0.1,   0.0,
-                      -0.1,  -0.2,  -0.3,  -0.4,  -0.5,  -0.6,  -0.7,  -0.8,  -0.9, 
-                      -0.91, -0.92, -0.93, -0.94, -0.95, -0.96, -0.97, -0.98, */-0.99, -1.0}) {
+  size_t trial_id = 0;
+  std::vector<double> muc_sweep_values{1.0,  0.999, 0.998, 0.997, 0.996, 0.995, 0.994, 0.993, 0.992, 0.991, 0.99, 0.98,  0.97,  0.96,  0.95,  0.94,  0.93,  0.92,  0.91,  -1.0};
+  std::vector<double> scale_sweep_values{0.1, 0.05, 0.025, 0.01, 0.005};
+  for (double mu_c : muc_sweep_values) {
     Material mat1(100.0, 100.0, 1e-4, mu_c);
     cell1.mat = &mat1;
 
@@ -434,12 +434,16 @@ int main() {
     cell2.mat = &mat2;
 
     settings.mu_c = {mat1.mu_c, mat2.mu_c};
+    for (double fraction : scale_sweep_values) {
 
-    double min_soft_mfp = 1 / std::max(mat1.sigma_tr, mat2.sigma_tr);
-    settings.ds = min_soft_mfp * settings.fraction;
+      settings.fraction = fraction;
 
-    settings.name = std::to_string(mu_c);
+      double min_soft_mfp = 1 / std::max(mat1.sigma_tr, mat2.sigma_tr);
+      settings.ds = min_soft_mfp * settings.fraction;
 
-    RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
+      settings.name = "Trial " + std::to_string(trial_id++);
+
+      RunAllSolves<Milstein, EulerMaruyama>(settings, tally, cell1);
+    }
   }
 }
