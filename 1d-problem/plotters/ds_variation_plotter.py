@@ -10,7 +10,7 @@ import numpy as np
 REFERENCE_PATH = pathlib.Path("../reference")
 REFERENCE_FILE = REFERENCE_PATH / "reference_sn.h5"
 
-OUTPUT_PATH = pathlib.Path("../outputs")
+OUTPUT_PATH = pathlib.Path("../outputs/ds_variation")
 OUTPUT_FILE = OUTPUT_PATH / "logspace_e-4_e0.h5"
 
 SAVE_PATH = pathlib.Path("../figures/ds_variation")
