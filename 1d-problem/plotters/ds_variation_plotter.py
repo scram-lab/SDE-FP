@@ -44,7 +44,7 @@ with h5py.File(OUTPUT_FILE, "r") as sde_file:
                 "time": ds_sets["time"][()][0],
             }
             SDE_DS_2_SCALE[float(ds)] = ds_sets["scale"][()][0]
-
+SDE_SOLN_DICT.pop("Euler-Maruyama")
 SDE_DS = sorted(SDE_DS, reverse=True)
 select_DS = [SDE_DS[i] for i in range(len(SDE_DS)) if not i % ((len(SDE_DS) - 1)/4) and SDE_DS[i] != max(SDE_DS)]
 
@@ -66,7 +66,7 @@ for i, (method, ds_dict) in enumerate(SDE_SOLN_DICT.items()):
     # normal figure
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
     sm.set_array([])
-    fig.colorbar(sm, ax=ax, label=r"$\Delta_s$ Relative to $\Sigma_{tr}$")
+    fig.colorbar(sm, ax=ax, label=r"$\Delta_s$ Relative to $\lambda_{\text{mfp,tr}}$")
     ax.plot(REF_X, REF_PHI, label=r"Reference $S_{64}$ Fokker-Planck", color="#0072B2", ls="--", lw=1.5)
     ax.axvline(0.75, color="k", ls="--")
     ax.legend()
