@@ -1,24 +1,45 @@
+import pathlib
 import numpy as np
 import matplotlib.pyplot as plt
 from numba import njit
 from numpy.polynomial.legendre import Legendre, legval
 
-SIGMA_TR = 0.5
+SAVEPATH = pathlib.Path("figures")
+SAVEPATH.mkdir(exist_ok=True)
+
+SIGMA_TR = 100
+MFP = 1 / SIGMA_TR
 MU_0 = 0.0
-S_MAX = 2.0
+S_MAX = 10 * MFP
 LEGENDRE_ORDER = 10 
 
 # =========================================================================== #
 # Analytical
 # =========================================================================== #
 def ana_psi(mu, s, legendre_order=1000):
-  LEGENDRE_PN = [Legendre.basis(n) for n in range(legendre_order+1)]
   mu, s = np.broadcast_arrays(mu, s)
-  res = np.full_like(mu, 0.5)
-  for l in range(1, legendre_order+1):
-    _sum = (2*l+1) / 2 * LEGENDRE_PN[l](mu)
-    _sum *= LEGENDRE_PN[l](MU_0) * np.exp(-l*(l+1) / 2 * SIGMA_TR * s)
-    res += _sum
+
+  #skip order 0
+  res = np.full(mu.shape, 0.5)
+
+  p0_mu, p1_mu = np.ones_like(mu), mu.copy()
+  p0_0, p1_0 = 1.0, MU_0 
+
+  # l = 1 term
+  res += (3/2) * p1_0 * np.exp(-1*2/2 * SIGMA_TR * s) * p1_mu
+
+  p_prev, p_cur = p0_mu, p1_mu
+  p_prev0, p_cur0 = p0_0, p1_0
+
+  for l in range(2, legendre_order + 1):
+    p_next = ((2*l - 1) * mu * p_cur - (l - 1) * p_prev) / l
+    p_next0 = ((2*l - 1) * MU_0 * p_cur0 - (l - 1) * p_prev0) / l
+
+    res += (2*l + 1) / 2 * p_next0 * np.exp(-l*(l+1) / 2 * SIGMA_TR * s) * p_next
+
+    p_prev, p_cur = p_cur, p_next
+    p_prev0, p_cur0 = p_cur0, p_next0
+
   return res
 
 
@@ -156,75 +177,37 @@ def evaluate_psi(psi_l, mu):
 # =========================================================================== #
 # Plotting
 # =========================================================================== #
-mu_vals = np.linspace(-1.0, 1.0, 500)
-s_vals_plot = [1.0, 2.0]
-ns_array = [11, 101]
+# =========================================================================== #
+n_histories = 100_000
 
-figs = []
-err_figs = []
-axes = []
-err_axes = []
-anas = []
-for s_val_plot in s_vals_plot:
-  fig, ax = plt.subplots()
-  figs.append(fig)
-  axes.append(ax)
-  analytical = ana_psi(mu_vals, s_val_plot)
-  anas.append(analytical)
-  ax.plot(mu_vals, analytical, color="k", label="Analytical")
-  ax.set_title(f"$S={s_val_plot}$")
-  fig, ax = plt.subplots()
-  ax.set_title(f"$S={s_val_plot}$") 
-  err_figs.append(fig)
-  err_axes.append(ax)
+scales = np.array([0.025 ,0.1, 1.0])
+ds_values = scales * MFP
+ns_values = np.asarray(S_MAX / ds_values, dtype=int) + 1
 
-for ns in ns_array:
-  s_vals = np.linspace(0.0, S_MAX, ns)
-  s_indices = np.where(np.isin(s_vals, s_vals_plot))[0]
-  euler_marayuma = euler_marayuma_psi(N_S=ns, N_HISTORIES=10_000_000)
-  #euler_marayuma = evaluate_psi(euler_marayuma_l, mu_vals)
-  milstein = milstein_psi(N_S=ns, N_HISTORIES=10_000_000)
-  #milstein = evaluate_psi(milstein_psi_l, mu_vals)
-  taylor2 = order2_weak(N_S=ns, N_HISTORIES=10_000_000)
-  nmu = euler_marayuma.shape[1]
-  mu_edges = np.linspace(-1.0, 1.0, nmu + 1)
-  mu_vals = 0.5 * (mu_edges[:-1] + mu_edges[1:])
+n_mu = 200
+mu_edges = np.linspace(-1.0, 1.0, n_mu + 1)
+mu_centers = 0.5 * (mu_edges[:-1] + mu_edges[1:])
 
-  for i, (ax, err_ax, sidx) in enumerate(zip(axes, err_axes, s_indices)):
-    analytical_hist = ana_psi(mu_vals, s_vals_plot[i])
-    ax.plot(
-      mu_vals, euler_marayuma[sidx],
-      label=rf"Euler, $\Delta s$={S_MAX/(ns-1)}"
-    )
-    err_ax.plot(
-      mu_vals, np.abs(euler_marayuma[sidx] - analytical_hist) / analytical_hist, 
-      label=rf"Euler, $\Delta s$={S_MAX/(ns-1)}"
-    )
-    ax.plot(
-      mu_vals, milstein[sidx],
-      label=rf"Milstein, $\Delta s$={S_MAX/(ns-1)}"
-    )
-    err_ax.plot(
-      mu_vals, np.abs(milstein[sidx] - analytical_hist) / analytical_hist, 
-      label=rf"Milstein, $\Delta s$={S_MAX/(ns-1)}"
-    )
-    ax.plot(
-      mu_vals, taylor2[sidx],
-      label=rf"Weak 2, $\Delta s$={S_MAX/(ns-1)}"
-    )
-    err_ax.plot(
-      mu_vals, np.abs(taylor2[sidx] - analytical_hist) / analytical_hist, 
-      label=rf"Weak 2, $\Delta s$={S_MAX/(ns-1)}"
-    )
+for scale, ns, ds in zip(scales, ns_values, ds_values):
+    s_grid = np.linspace(0.0, S_MAX, ns)
 
-for _axes in [axes, err_axes]:
-  for ax in _axes:
+    print("Generating numerical solution")
+    psi = milstein_psi(N_S=ns, N_MU=n_mu, N_HISTORIES=n_histories)
+
+    s_mesh, mu_grid = np.meshgrid(s_grid, mu_centers, indexing="ij")
+    print("Generating analytical solution")
+    ana = ana_psi(mu_grid, s_mesh)
+
+    print("Plotting")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rel_err = np.abs(psi - ana) / ana
+    rel_err = np.where(ana > 1e-12, rel_err, np.nan)
+
+    fig, ax = plt.subplots()
+    colorplot = ax.pcolormesh(mu_centers, s_grid / MFP, rel_err, shading="auto", vmin=0, vmax=1)
     ax.set_xlabel(r"$\mu$")
-    ax.legend()
-    #ax.set_yscale("log")
-for s, fig, err_fig in zip(s_vals_plot, figs, err_figs):
-  name = f"s-{s}-".replace(".", "_")
-  fig.savefig(name+"psi")
-  err_fig.savefig(name + "error")
+    ax.set_ylabel(r"$\lambda_{\text{mfp,tr}}$")
+    ax.grid(False)
+    fig.colorbar(colorplot, ax=ax, label="Relative error")
+    fig.savefig(SAVEPATH / f"err_heatmap_{scale}.pdf")
 plt.show()
-
