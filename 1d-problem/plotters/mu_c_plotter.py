@@ -39,7 +39,7 @@ with h5py.File(OUTPUT_FILE, "r") as sde_file:
     for method, solver_solns in sde_file.items():
         SDE_SOLN_DICT[method.title()] = {}
         for trial_name, soln_sets in solver_solns.items():
-            if trial_name == "Reference Boltzmann":
+            if "Reference Boltzmann" in trial_name:
                 continue
             trial_id = int(trial_name.split(" ")[-1])
 
@@ -60,9 +60,10 @@ with h5py.File(OUTPUT_FILE, "r") as sde_file:
                 "psi": soln_sets["psi"][()],
                 "time": soln_sets["time"][()][0],
             }
-    ref_soln_set = sde_file["milstein/Reference Boltzmann"]
+    ref_soln_set = sde_file["milstein/Reference Boltzmann (solution)"]
     REF_BOLTZMANN = ref_soln_set["phi"][()]
-    REF_BOLTZMANN_TIME = ref_soln_set["time"][()][0]
+    ref_time_set = sde_file["milstein/Reference Boltzmann (time)"]
+    REF_BOLTZMANN_TIME = ref_time_set["time"][()][0]
 SDE_SOLN_DICT.pop("Euler-Maruyama")
 
 SDE_MU_C = sorted(list(SDE_MU_C))
@@ -151,17 +152,18 @@ for method in SDE_SOLN_DICT.keys():
             zorder= 3 - scale,
         )
 
+    err_ax.set_ylabel("Relative $L_2$ Error")
+
+    time_ax.axhline(REF_BOLTZMANN_TIME, color="k", linestyle="--", zorder=2, label=r"$\mu_c=1$ Runtime") 
+    time_ax.set_ylabel("Runtime  [s]")
+
     for ax in [time_ax, err_ax]:
         ax.set_xlabel(r"$\mu_c$")
         ax.legend()
         ax.set_xticks(positions)
         ax.set_xticklabels([f'{v:g}' for v in SDE_MU_C[1:]], rotation=45, ha='right')
 
-    err_ax.set_ylabel("Relative $L_2$ Error")
     err_fig.savefig(SAVE_PATH / f"error_{method.lower()}")
-
-    time_ax.axhline(REF_BOLTZMANN_TIME, color="k", linestyle="--", zorder=2, label=r"$\mu_c=1$ Runtime") 
-    time_ax.set_ylabel("Runtime  [s]")
     time_fig.savefig(SAVE_PATH / f"runtime_{method.lower()}")
 
 plt.show()

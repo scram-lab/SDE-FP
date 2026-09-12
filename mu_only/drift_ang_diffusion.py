@@ -1,15 +1,17 @@
 import pathlib
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 from numba import njit
 from numpy.polynomial.legendre import Legendre, legval
+from scipy.interpolate import interp1d
 
-SAVEPATH = pathlib.Path("figures")
-SAVEPATH.mkdir(exist_ok=True)
+SAVEPATH = pathlib.Path("figures/mu_only")
+SAVEPATH.mkdir(exist_ok=True, parents=True)
 
 SIGMA_TR = 100
 MFP = 1 / SIGMA_TR
-MU_0 = 0.0
+MU_0 = 1.0
 S_MAX = 10 * MFP
 LEGENDRE_ORDER = 10 
 
@@ -180,13 +182,20 @@ def evaluate_psi(psi_l, mu):
 # =========================================================================== #
 n_histories = 100_000
 
-scales = np.array([0.025 ,0.1, 1.0])
+scales = 2.0 ** np.array([0.0, -2.0, -4.0, -6.0])
 ds_values = scales * MFP
 ns_values = np.asarray(S_MAX / ds_values, dtype=int) + 1
+ns_plot = ns_values.max()
 
-n_mu = 200
+n_mu = int(1 / scales.min()) * 2
+print(1/scales, n_mu)
 mu_edges = np.linspace(-1.0, 1.0, n_mu + 1)
 mu_centers = 0.5 * (mu_edges[:-1] + mu_edges[1:])
+
+max_s_grid = np.linspace(0.0, S_MAX, ns_plot)
+s_mesh, mu_grid = np.meshgrid(max_s_grid, mu_centers, indexing="ij")
+print("Generating analytical solution")
+ana = ana_psi(mu_grid, s_mesh)
 
 for scale, ns, ds in zip(scales, ns_values, ds_values):
     s_grid = np.linspace(0.0, S_MAX, ns)
@@ -194,17 +203,25 @@ for scale, ns, ds in zip(scales, ns_values, ds_values):
     print("Generating numerical solution")
     psi = milstein_psi(N_S=ns, N_MU=n_mu, N_HISTORIES=n_histories)
 
-    s_mesh, mu_grid = np.meshgrid(s_grid, mu_centers, indexing="ij")
-    print("Generating analytical solution")
-    ana = ana_psi(mu_grid, s_mesh)
+    if ns != ns_plot:
+      interp_fn = interp1d(s_grid, psi, axis=0, kind="previous", bounds_error=False, fill_value=np.nan)
+      psi_plot = interp_fn(max_s_grid)
+    else: 
+      psi_plot = psi
 
     print("Plotting")
     with np.errstate(divide="ignore", invalid="ignore"):
-        rel_err = np.abs(psi - ana) / ana
+        rel_err = np.abs(psi_plot - ana) / ana
     rel_err = np.where(ana > 1e-12, rel_err, np.nan)
 
     fig, ax = plt.subplots()
-    colorplot = ax.pcolormesh(mu_centers, s_grid / MFP, rel_err, shading="auto", vmin=0, vmax=1)
+    colorplot = ax.imshow(
+      rel_err,
+      extent=[mu_centers[0], mu_centers[-1], s_grid[0], s_grid[-1] / MFP],
+      origin="lower",
+      aspect="auto",
+      norm=LogNorm(vmin=1e-3, vmax=1)
+    )
     ax.set_xlabel(r"$\mu$")
     ax.set_ylabel(r"$\lambda_{\text{mfp,tr}}$")
     ax.grid(False)
