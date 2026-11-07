@@ -75,8 +75,8 @@ struct Particle {
 struct Material {
   Material(double sigma_s0, double sigma_t, double eta, double mu_c) 
     : mu_c(mu_c), eta(eta),
-      sigma_t(sigma_t),
       sigma_sl(sigma_s0*eta*(1 + mu_c) / (1-mu_c+2*eta)),
+      sigma_t(sigma_sl),
       sigma_tr(2*sigma_s0*eta*(1+eta)*(std::log((1-mu_c + 2*eta)/(2*eta)) - (1-mu_c)/(1-mu_c+2*eta))),
       sctr_ratio(sigma_sl / sigma_t),
       _C((1 - mu_c + 2*eta) * (2 + 2*eta) / (1 + mu_c))
@@ -329,7 +329,7 @@ class HistogramTally {
 void Particle::DoHardCollision() {
   distance_to_next_collision = PathLengthToNextCollision();
   // check if it actually scatters or not
-  if (UNIFORM_DISTRIBUTION(RNG) >= cell->mat->sctr_ratio) return;
+  //if (UNIFORM_DISTRIBUTION(RNG) >= cell->mat->sctr_ratio) return;
 
   //update mu
   double mu_s = cell->mat->InvCDFScattering(); 
@@ -348,7 +348,7 @@ void Particle::Update(double ds, HistogramTally<XBins, MuBins>& tally) {
     double x0 = x;
     double distance_to_surf = cell->Distance(*this);
     double potential_x = Solver::NewX(*this, ds);
-    double ds_to_coll = distance_to_next_collision / cell->mat->sigma_t;
+    double ds_to_coll = cell->mat->sigma_t != 0.0 ? distance_to_next_collision / cell->mat->sigma_t : 100.0;
     bool leak = (std::abs(potential_x - x) >= distance_to_surf);
     bool collide_before_leak = (distance_to_surf >= std::abs(ds_to_coll * mu));
     bool collide = (ds >= ds_to_coll) && collide_before_leak;
@@ -425,7 +425,8 @@ int main() {
   settings.num_histories = 1e6;
   size_t trial_id = 0;
   std::vector<double> muc_sweep_values{0.999, 0.998, 0.997, 0.996, 0.995, 0.994, 0.993, 0.992, 0.991, 0.99, 0.98,  0.97,  0.96,  0.95,  0.94,  0.93,  0.92,  0.91, 0.90, -1.0};
-  std::vector<double> scale_sweep_values{0.1, 0.05, 0.025, 0.01, 0.005};
+  std::vector<double> scale_sweep_values{//1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01, 0.009, 0.008, 0.007, 0.006, 0.005, 0.004, 0.003, 0.002, 0.001, 0.0009, 0.0008, 0.0007, 0.0006, 0.0005, 0.0004, 0.0003, 0.0002, 0.0001};
+  0.1, 0.05, 0.025, 0.01, 0.005};
   settings.num_trials = muc_sweep_values.size() * scale_sweep_values.size();
   for (double mu_c : muc_sweep_values) {
     Material mat1(100.0, 100.0, 1e-4, mu_c);
@@ -458,6 +459,10 @@ int main() {
   settings.mu_c = {mat1.mu_c, mat2.mu_c};
   settings.fraction = 1.0; // doesn't matter
   settings.ds = 1.0; // also doesn't matter
-  settings.name = "Reference Boltzmann";
+  settings.name = "Reference Boltzmann (time)";
+  RunAllSolves<Milstein>(settings, tally, cell1);
+
+  settings.num_histories = 1e8;
+  settings.name = "Reference Boltzmann (solution)";
   RunAllSolves<Milstein>(settings, tally, cell1);
 }

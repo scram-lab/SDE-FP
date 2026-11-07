@@ -78,7 +78,7 @@ for i, (method, trial_dict) in enumerate(SDE_SOLN_DICT.items()):
     ax.plot(REF_X, REF_PHI, label=r"Reference $S_{64}$ Fokker-Planck", color="#0072B2", ls="--", lw=1.5)
     ax.axvline(0.75, color="k", ls="--")
     ax.legend()
-    ax.set_xlabel(r"X Position  $\left(cm\right)$")
+    ax.set_xlabel(r"Z Position  $\left(cm\right)$")
     ax.set_ylabel(r"$\phi$  $\left(cm^{2}\cdot s^{-1}\right)$")
     fig.savefig(SAVE_PATH / f"phi_{method}")
 
@@ -86,7 +86,7 @@ for i, (method, trial_dict) in enumerate(SDE_SOLN_DICT.items()):
     err_ax.axvline(0.75, color="k", ls="--")
     handles, labels = err_ax.get_legend_handles_labels()
     err_ax.legend(handles[::-1], labels[::-1])
-    err_ax.set_xlabel(r"X Position  $\left(cm\right)$")
+    err_ax.set_xlabel(r"Z Position  $\left(cm\right)$")
     err_ax.set_ylabel("Relative Error (to reference)")
     err_fig.savefig(SAVE_PATH / f"ds_slice_error_{method}.pdf")
 

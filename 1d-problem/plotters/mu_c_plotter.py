@@ -118,13 +118,13 @@ for method, trial_dict in SDE_SOLN_DICT.items():
         )
 
         ax.axvline(0.75, color="k", ls="--")
-        ax.set_xlabel(r"X Position  $\left(cm\right)$")
+        ax.set_xlabel(r"Z Position  $\left(cm\right)$")
         ax.set_ylabel(r"$\phi$  $\left(cm^{2}\cdot s^{-1}\right)$")
         ax.legend()
         fig.savefig(SAVE_PATH / f"phi-{scale}.pdf")
 
     err_ax.axvline(0.75, color="k", ls="--")
-    err_ax.set_xlabel(r"X Position  $\left(cm\right)$")
+    err_ax.set_xlabel(r"Z Position  $\left(cm\right)$")
     err_ax.set_ylabel(r"Relative Difference to $\mu_c=1$")
     err_ax.legend()
     err_fig.savefig(SAVE_PATH / "select_errors")
@@ -161,7 +161,7 @@ for method in SDE_SOLN_DICT.keys():
         ax.set_xlabel(r"$\mu_c$")
         ax.legend()
         ax.set_xticks(positions)
-        ax.set_xticklabels([f'{v:g}' for v in SDE_MU_C[1:]], rotation=45, ha='right')
+        ax.set_xticklabels([f'{v if i%2 else ""}' for i, v in enumerate(SDE_MU_C[1:])], rotation=45, ha='right')
 
     err_fig.savefig(SAVE_PATH / f"error_{method.lower()}")
     time_fig.savefig(SAVE_PATH / f"runtime_{method.lower()}")
